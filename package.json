@@ -1,0 +1,36 @@
+{
+  "name": "teabot",
+  "version": "2.0.0",
+  "description": "Slack bot to handle tea rounds",
+  "main": "src/app.js",
+  "scripts": {
+    "lint": "eslint src",
+    "flow": "flow",
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "babel-watch src/app.js",
+    "build": "babel src -d dist",
+    "serve": "node dist/app.js"
+  },
+  "repository": "git+https://github.com/millar/docker-teabot.git",
+  "author": "Sam Millar",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/millar/docker-teabot/issues"
+  },
+  "homepage": "https://github.com/millar/docker-teabot#readme",
+  "dependencies": {
+    "@slack/client": "3.16.0",
+    "babel-cli": "6.26.0",
+    "babel-preset-env": "1.6.1",
+    "babel-preset-flow": "6.23.0",
+    "babel-preset-stage-0": "6.24.1",
+    "sequelize": "^4.33.4",
+    "sqlite3": "^3.1.13"
+  },
+  "devDependencies": {
+    "babel-eslint": "7",
+    "babel-watch": "2.0.7",
+    "eslint": "4.x",
+    "flow-bin": "0.66.0"
+  }
+}
