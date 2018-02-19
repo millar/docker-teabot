@@ -2,8 +2,11 @@ import config from "./conf";
 import Round from "./round";
 import slack from "./slack";
 import { random } from "./utils";
+import { Op } from "sequelize";
 import User from "./models/user";
 import type { SlackMessage, SlackUser } from "./slack";
+
+const COLORS = ["#1d2d3b", "#52aad8", "#273a4b", "#52aad8"];
 
 const HELP_TEXT = `
     Welcome to ${config.beverageName}bot v2.
@@ -39,11 +42,10 @@ export default class {
                 "Time is up! Looks like no one else wants a cuppa."
             );
         } else {
-            const colors = ["#1d2d3b", "#52aad8", "#273a4b", "#52aad8"];
             let attachments = round.customers.map((user, idx) => ({
                 author_icon: user.picture,
                 author_name: `@${user.username}`,
-                color: colors[idx % colors.length],
+                color: COLORS[idx % COLORS.length],
                 text: `${user.name} would like ${user.tea_type}`,
                 footer: `${user.teas_brewed} brewed | ${
                     user.teas_received
@@ -78,6 +80,10 @@ export default class {
             [["brew", ":tea:"], this.brew],
             [["me", ":woman_raising_hand:", ":man_raising_hand:"], this.me],
             [["timer", "remaining"], this.timer],
+            ["leaderboard", this.leaderboard],
+            [["directory", "users"], this.directory],
+            ["stats", this.stats],
+            ["info", this.info],
             [["help", "info"], this.help],
             ["ping", this.ping],
             [["hi", "hello", "yo"], this.hello]
@@ -195,6 +201,111 @@ export default class {
 
         this.round.addcustomer(user);
         ["thumbsup", "tea"].forEach(emoji => slack.addReaction(emoji, message));
+    };
+
+    leaderboard = async user => {
+        const users = await User.findAll({
+            where: {
+                tea_type: {
+                    [Op.ne]: null
+                },
+                teas_brewed: {
+                    [Op.gt]: 0
+                },
+                [Op.or]: [{ deleted: null }, { deleted: 0 }]
+            },
+            order: [["teas_brewed", "DESC"]]
+        });
+
+        const lines = users.map(
+            (user, idx) =>
+                `${idx + 1}. _${user.name}_ has brewed *${
+                    user.teas_brewed
+                }* cups of ${config.beverageName}`
+        );
+        slack.sendMessage("*Teabot Leaderboard*\n" + lines.join("\n"));
+    };
+
+    directory = async user => {
+        const users = await User.findAll({
+            where: {
+                tea_type: {
+                    [Op.ne]: null
+                },
+                [Op.or]: [{ deleted: null }, { deleted: 0 }]
+            },
+            order: [["username", "DESC"]]
+        });
+
+        const attachments = users.map((user, idx) => ({
+            author_icon: user.picture,
+            author_name: `@${user.username}`,
+            color: COLORS[idx % COLORS.length],
+            text: `${user.name} likes ${user.tea_type}`
+        }));
+        slack.sendMessage(`There are ${users.length} registered users.`, {
+            attachments
+        });
+    };
+
+    stats = async user => {
+        const users = await User.findAll({
+            where: {
+                tea_type: {
+                    [Op.ne]: null
+                },
+                teas_brewed: {
+                    [Op.gt]: 0
+                },
+                [Op.or]: [{ deleted: null }, { deleted: 0 }]
+            },
+            order: [["teas_brewed", "DESC"]]
+        });
+
+        const attachments = users.map((user, idx) => ({
+            author_icon: user.picture,
+            author_name: `@${user.username}`,
+            color: COLORS[idx % COLORS.length],
+            footer: `${user.teas_brewed} brewed | ${
+                user.teas_received
+            } received | ${user.teas_drunk} consumed`
+        }));
+        slack.sendMessage(
+            `Statistics for ${users.length} registered brewers.`,
+            {
+                attachments
+            }
+        );
+    };
+
+    info = async (user, lookup) => {
+        // TODO: remove @ prefix and trim lookup
+
+        const matchingUser = await User.findOne({
+            where: {
+                username: lookup
+            },
+            order: [["username", "DESC"]]
+        });
+
+        if (!matchingUser) {
+            slack.sendMessage("User not found!");
+            return;
+        }
+
+        const attachment = {
+            author_icon: matchingUser.picture,
+            author_name: `@${matchingUser.username}`,
+            color: COLORS[0],
+            text: `${user.name} likes ${user.tea_type}`,
+            footer: `${matchingUser.teas_brewed} brewed | ${
+                matchingUser.teas_received
+            } received | ${matchingUser.teas_drunk} consumed`
+        };
+
+        slack.sendMessage("", {
+            attachments: [attachment]
+        });
     };
 
     hello = user => {
