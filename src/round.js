@@ -1,6 +1,6 @@
 // @flow
 import config from "./conf";
-import User from "./models/user";
+import { Customer, Server, User } from "./models";
 import type { SlackUser } from "./slack";
 
 class Round {
@@ -11,15 +11,24 @@ class Round {
     interval: ?IntervalID = null;
 
     server: User = null;
-    customers: [User] = [];
+    customers: User[] = [];
 
-    callback: () => void;
+    nomination: boolean = false;
 
-    constructor(user: User, callback: () => void) {
+    limit: ?number = null; // TODO: implement
+
+    callback: Round => void;
+
+    constructor(
+        user: User,
+        callback: Round => void,
+        nomination: boolean = false
+    ) {
         this.timeRemaining = config.brewTimeout;
         this.interval = setInterval(this.tick, 1000);
         this.server = user;
         this.callback = callback;
+        this.nomination = nomination;
     }
 
     get active(): boolean {
@@ -40,25 +49,46 @@ class Round {
         }
     };
 
-    hascustomer = user => this.customers.find(p => p.id == user.id);
+    hasCustomer = (user: User) => this.customers.find(p => p.id == user.id);
 
-    addcustomer = user => {
+    addCustomer = (user: User) => {
         this.customers.push(user);
     };
 
-    recordRound = () => {
-        this.customers.forEach(customer => {
-            customer.teas_drunk += 1;
-            customer.teas_received += 1;
-            this.server.teas_brewed += 1;
+    recordRound = async () => {
+        const updates = [];
+
+        const server = await Server.create({
+            user_id: this.server.id,
+            limit: this.limit,
+            completed: true
         });
 
-        this.server.teas_brewed += 1;
-        this.server.teas_drunk += 1;
-        this.server.times_brewed += 1;
+        this.customers.forEach(customer => {
+            updates.push(
+                customer.increment({
+                    teas_drunk: 1,
+                    teas_received: 1
+                }),
+                Customer.create({
+                    user_id: customer.id,
+                    server_id: server.id
+                })
+            );
+        });
 
-        this.customers.forEach(customer => customer.save());
-        this.server.save();
+        updates.push(
+            this.server.increment({
+                teas_brewed: this.customers.length + 1,
+                teas_drunk: 1,
+                times_brewed: 1
+            })
+        );
+
+        await Promise.all(updates);
+
+        // Update ranks only after all customer records have been persisted
+        User.updateRanks();
     };
 }
 

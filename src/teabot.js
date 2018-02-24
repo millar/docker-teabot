@@ -1,8 +1,10 @@
+// @flow
+import moment from "moment";
+import { Op } from "sequelize";
 import config from "./conf";
 import Round from "./round";
 import slack from "./slack";
 import { random } from "./utils";
-import { Op } from "sequelize";
 import User from "./models/user";
 import type { SlackMessage, SlackUser } from "./slack";
 
@@ -22,17 +24,17 @@ export default class {
         this.bindCommands();
     }
 
-    get round() {
+    get round(): ?Round {
         return this._round && this._round.active ? this._round : null;
     }
 
-    set round(value) {
+    set round(value: Round) {
         this._round = value;
     }
 
-    startRound = (user: SlackUser): void => {
+    startRound = (user: SlackUser, ...args): void => {
         if (!this.round) {
-            this.round = new Round(user, this.completeRound);
+            this.round = new Round(user, this.completeRound, ...args);
         }
     };
 
@@ -58,16 +60,15 @@ export default class {
 
     bindCommands() {
         slack.messageHandler(async (message: SlackMessage) => {
-            const slackUser = await slack.findUser(message.user);
-
-            // Ensure user is a database
-            const user = await User.fromSlack(slackUser);
-
             const pattern = new RegExp(
                 "\\s*<@" + RegExp.escape(slack.user.id) + ">:?\\s(.*)"
             );
             const match = message.text.match(pattern);
             if (match) {
+                // Ensure user is in database
+                const slackUser = await slack.findUser(message.user);
+                const user = await User.fromSlack(slackUser);
+
                 const command = match[1];
                 this.processCommand(command, user, message);
             }
@@ -76,8 +77,8 @@ export default class {
 
     processCommand(command: string, user: User, message: SlackMessage) {
         const commands = [
-            ["register", this.register],
-            [["brew", ":tea:"], this.brew],
+            [["register", "update"], this.register],
+            [["brew", `:${config.beverageName}:`], this.brew],
             [["me", ":woman_raising_hand:", ":man_raising_hand:"], this.me],
             [["timer", "remaining"], this.timer],
             ["leaderboard", this.leaderboard],
@@ -134,6 +135,7 @@ export default class {
         slack.sendMessage(
             // TODO: add message about how to brew and how to request depending
             // on if this.round is true
+            // TODO: advise user to add 'brew' as a notification word in slack settings
             user.registered
                 ? `I've updated your ${config.beverageName} preference`
                 : `Welcome to the ${config.beverageName} party ${user.name}`
@@ -143,7 +145,7 @@ export default class {
         user.save();
     };
 
-    brew = async (user: User, args, message: SlackMessage) => {
+    brew = async (user: User, args: string, message: SlackMessage) => {
         if (this.round) {
             slack.sendMessage(
                 this.round.server.id == user.id
@@ -156,22 +158,69 @@ export default class {
         }
 
         this.startRound(user);
-        const text = `<@${user.slack_id}> is making ${
+        const text = `<@${user.slack_id}>${user.badge} is making ${
             config.beverageName
         }. Who's in?`;
         slack.addReaction(
-            random(["tea", "raised_hands", "thumbsup", "clap"]),
+            random(["tea", "coffee", "raised_hands", "thumbsup", "clap"]),
             message
         );
         return await slack.sendMessage(text);
     };
 
-    me = async (user: User, args, message: SlackMessage) => {
+    nominate = async (
+        user: User,
+        lookup: string = "",
+        message: SlackMessage
+    ) => {
+        // TODO: check nomination points
+
+        const pattern = /<@(.+)>/i;
+        const match = lookup.match(pattern);
+
+        if (!match) {
+            slack.sendMessage(
+                `To nominate you must specify a valid user e.g. \`@${
+                    slack.user.name
+                } nominate @fred\``
+            );
+            return;
+        }
+
+        const nominee = await User.findOne({ where: { slack_id: match[1] } });
+
+        if (!nominee && nominee.registered) {
+            slack.sendMessage("User not found!");
+            return;
+        }
+
+        if (this.round) {
+            slack.sendMessage(
+                this.round.server.id == user.id
+                    ? `You have already offered to make ${config.beverageName}!`
+                    : `${this.round.server.name} is already making ${
+                          config.beverageName
+                      }!`
+            );
+            return;
+        }
+
+        this.startRound(nominee, user);
+        const text = `<@${user.slack_id}>${user.badge} has nominated <@${
+            nominee.slack_id
+        }>${nominee.badge} to make ${config.beverageName}! Who wants some?`;
+        slack.addReaction(random(["scream"]), message);
+        return await slack.sendMessage(text);
+    };
+
+    me = async (user: User, args: string, message: SlackMessage) => {
         if (!user.registered) {
             slack.sendMessage(
-                `You must register your tea preference first. Try \`@${
-                    slack.user.name
-                } register green tea\``
+                `You must register your ${
+                    config.beverageName
+                } preference first. Try \`@${slack.user.name} register milky ${
+                    config.beverageName
+                } with sugar\``
             );
             return;
         }
@@ -194,39 +243,42 @@ export default class {
             return;
         }
 
-        if (this.round.hascustomer(user)) {
+        if (this.round.hasCustomer(user)) {
             slack.sendMessage(`You said it once already ${user.name}.`);
             return;
         }
 
-        this.round.addcustomer(user);
-        ["thumbsup", "tea"].forEach(emoji => slack.addReaction(emoji, message));
+        this.round.addCustomer(user);
+        ["thumbsup", user.badge ? user.badge.replace(/:/g, "") : "tea"].forEach(
+            emoji => slack.addReaction(emoji, message)
+        );
     };
 
-    leaderboard = async user => {
-        const users = await User.findAll({
-            where: {
-                tea_type: {
-                    [Op.ne]: null
-                },
-                teas_brewed: {
-                    [Op.gt]: 0
-                },
-                [Op.or]: [{ deleted: null }, { deleted: 0 }]
-            },
-            order: [["teas_brewed", "DESC"]]
+    leaderboard = async (user: User, since) => {
+        let date = moment().subtract({ months: 1 });
+        if (since) {
+            date = moment(since);
+        }
+        const users = await User.getRanksSince(date);
+
+        const lines = users.map((user, idx) => {
+            return `${idx + 1}. _${user.name}_ has brewed *${user.get(
+                "total"
+            )}* cups of ${config.beverageName}`;
         });
 
-        const lines = users.map(
-            (user, idx) =>
-                `${idx + 1}. _${user.name}_ has brewed *${
-                    user.teas_brewed
-                }* cups of ${config.beverageName}`
-        );
-        slack.sendMessage("*Teabot Leaderboard*\n" + lines.join("\n"));
+        slack.sendMessage("", {
+            attachments: [
+                {
+                    title: `Leaderboard since ${date.format("MMMM Do YYYY")}`,
+                    text: lines.join("\n"),
+                    mrkdwn_in: ["text", "pretext"]
+                }
+            ]
+        });
     };
 
-    directory = async user => {
+    directory = async (user: User) => {
         const users = await User.findAll({
             where: {
                 tea_type: {
@@ -248,7 +300,7 @@ export default class {
         });
     };
 
-    stats = async user => {
+    stats = async (user: User) => {
         const users = await User.findAll({
             where: {
                 tea_type: {
@@ -278,14 +330,22 @@ export default class {
         );
     };
 
-    info = async (user, lookup) => {
+    info = async (user: User, lookup: string = "") => {
         // TODO: remove @ prefix and trim lookup
+        const pattern = /<@(.+)>/i;
+        const match = lookup.match(pattern);
+
+        if (!match) {
+            slack.sendMessage(
+                `To get user info please specify a valid user e.g. \`@${
+                    slack.user.name
+                } info @bob\``
+            );
+            return;
+        }
 
         const matchingUser = await User.findOne({
-            where: {
-                username: lookup
-            },
-            order: [["username", "DESC"]]
+            where: { slack_id: match[1] }
         });
 
         if (!matchingUser) {
@@ -308,16 +368,15 @@ export default class {
         });
     };
 
-    hello = user => {
+    hello = (user: User) => {
         slack.sendMessage(`Hello ${user.name}! :wave:`);
     };
 
     timer = () =>
         this.round
             ? slack.sendMessage(
-                  `:timer_clock: ${
-                      this.round.timeRemaining
-                  } seconds remaining...`
+                  `:timer_clock: ${this.round.timeRemaining ||
+                      0} seconds remaining...`
               )
             : slack.sendMessage(`No one is making ${config.beverageName}`);
 

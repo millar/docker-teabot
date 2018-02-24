@@ -1,1 +1,3 @@
-export const random = arr => arr[Math.floor(Math.random() * arr.length)];
+// @flow
+export const random = (arr: any[]) =>
+    arr[Math.floor(Math.random() * arr.length)];

@@ -10,7 +10,7 @@ export type SlackMessage = {|
     type: string,
     channel: string,
     user: string,
-    test: string,
+    text: string,
     ts: number
 |};
 
@@ -32,6 +32,10 @@ export type SlackUser = {|
     color: string,
     real_name: string,
     profile: SlackProfile
+|};
+
+export type SlackMessageOptions = {|
+    attachments?: any
 |};
 
 const web = new WebClient(config.slackToken);
@@ -76,12 +80,21 @@ class Slack {
         });
     });
 
-    sendMessage = (text: string, options = {}): Promise<SlackMessage> =>
+    sendMessage = (
+        text: string,
+        options: SlackMessageOptions = {}
+    ): Promise<SlackMessage> =>
         new Promise((resolve, reject) => {
+            function capitalizeFirstLetter(string) {
+                return string.charAt(0).toUpperCase() + string.slice(1);
+            }
+
             this.onReady.then(() => {
                 web.chat
                     .postMessage(this.channel.id, text, {
-                        username: this.user.name,
+                        username: `${capitalizeFirstLetter(
+                            config.beverageName
+                        )} Bot`,
                         icon_emoji: ":tea:",
                         ...options
                     })

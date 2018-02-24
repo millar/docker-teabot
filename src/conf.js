@@ -1,5 +1,4 @@
 // @flow
-
 if (!process.env.SLACK_TOKEN) {
     throw "You must define a SLACK_TOKEN environment variable";
 }

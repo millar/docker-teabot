@@ -26,4 +26,8 @@ const Customer = db.define(
     }
 );
 
+Customer.belongsTo(User, { foreignKey: "user_id" });
+Customer.belongsTo(Server, { foreignKey: "server_id" });
+Server.hasMany(Customer, { foreignKey: "server_id" });
+
 export default Customer;

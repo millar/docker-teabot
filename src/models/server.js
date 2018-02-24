@@ -26,4 +26,6 @@ const Server = db.define(
     }
 );
 
+Server.belongsTo(User, { foreignKey: "user_id" });
+
 export default Server;
